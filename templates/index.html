@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPDY Chatbot 🤖</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      background: url("static/b4.jpg") no-repeat center center fixed;
+      background-size: cover;
+    }
+    .chat-container {
+      max-width: 800px;
+      width: 90%;
+      margin-left: 60px;
+      background: rgba(255, 255, 255, 0.75);
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+      height: 80vh;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .chat-box {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .message {
+      margin: 10px 0;
+      padding: 12px;
+      border-radius: 10px;
+      max-width: 70%;
+      line-height: 1.4;
+    }
+    .user { background: rgba(209, 231, 255, 0.85); align-self: flex-end; }
+    .bot { background: rgba(233, 236, 239, 0.85); align-self: flex-start; }
+    .typing { font-style: italic; color: #666; margin-left: 10px; }
+    .source { font-size: 12px; margin-top: 4px; color: #007bff; }
+    .source a { color: #007bff; text-decoration: none; }
+    .source a:hover { text-decoration: underline; }
+    .input-area { display: flex; border-top: 1px solid #ccc; }
+    .input-area input {
+      flex: 1;
+      border: none;
+      padding: 15px;
+      font-size: 16px;
+      background: rgba(255,255,255,0.7);
+      outline: none;
+    }
+    .input-area button {
+      background: #007bff;
+      color: #fff;
+      border: none;
+      padding: 15px 20px;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    .input-area button:hover { background: #0056b3; }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div id="chat-box" class="chat-box"></div>
+    <div class="input-area">
+      <input type="text" id="user-input" placeholder="Ask your question..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+<script>
+  async function sendMessage() {
+    const inputField = document.getElementById("user-input");
+    const message = inputField.value.trim();
+    if (!message) return;
+
+    appendMessage("user", message);
+    inputField.value = "";
+
+    const typingDiv = document.createElement("div");
+    typingDiv.className = "typing";
+    typingDiv.id = "typing";
+    typingDiv.innerText = "🤖 Bot is typing...";
+    document.getElementById("chat-box").appendChild(typingDiv);
+    scrollToBottom();
+
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: message })
+      });
+
+      const data = await response.json();
+      document.getElementById("typing").remove();
+      typeMessage("bot", data.answer || "❌ No response from bot.", data.sources || []);
+    } catch (err) {
+      document.getElementById("typing").remove();
+      appendMessage("bot", "⚠️ Error connecting to server.");
+    }
+  }
+
+  function appendMessage(role, text, sources=[]) {
+    const chatBox = document.getElementById("chat-box");
+    const msgDiv = document.createElement("div");
+    msgDiv.className = `message ${role}`;
+    msgDiv.innerText = text;
+    chatBox.appendChild(msgDiv);
+
+    if (role === "bot" && sources.length > 0) {
+      const srcDiv = document.createElement("div");
+      srcDiv.className = "source";
+      srcDiv.innerHTML = "Source: " + sources.map(
+        s => `<a href="${s.url}" target="_blank">${s.title || s.url}</a>`
+      ).join(", ");
+      chatBox.appendChild(srcDiv);
+    }
+    scrollToBottom();
+  }
+
+  function typeMessage(role, text, sources=[]) {
+    const chatBox = document.getElementById("chat-box");
+    const msgDiv = document.createElement("div");
+    msgDiv.className = `message ${role}`;
+    chatBox.appendChild(msgDiv);
+
+    const words = text.split(" ");
+    let i = 0;
+    function typing() {
+      if (i < words.length) {
+        msgDiv.innerText += (i > 0 ? " " : "") + words[i];
+        i++;
+        scrollToBottom();
+        setTimeout(typing, 200); // typing speed
+      } else if (sources.length > 0) {
+        const srcDiv = document.createElement("div");
+        srcDiv.className = "source";
+        srcDiv.innerHTML = "Source: " + sources.map(
+          s => `<a href="${s.url}" target="_blank">${s.title || s.url}</a>`
+        ).join(", ");
+        chatBox.appendChild(srcDiv);
+        scrollToBottom();
+      }
+    }
+    typing();
+  }
+
+  function scrollToBottom() {
+    const chatBox = document.getElementById("chat-box");
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  // Optional: Enter key to send
+  document.getElementById("user-input").addEventListener("keypress", function(e) {
+    if (e.key === "Enter") sendMessage();
+  });
+</script>
+</body>
+</html>
