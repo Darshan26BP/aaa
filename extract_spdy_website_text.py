@@ -17,13 +17,13 @@ from tqdm import tqdm
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # ---------------- CONFIG ----------------
-START_URL = "https://spyd.vercel.app/"   # change to https://mite.ac.in/ when ready
+START_URL = "https://spyd.vercel.app/"   # change to https://spdy.ac.in/ when ready
 MAX_DEPTH = 3
 MAX_PAGES = 500
-OUTPUT_JSON = "mite_website_pages_full.json"
-OUTPUT_TEXT = "mite_website_full_content.txt"
+OUTPUT_JSON = "spdy_website_pages_full.json"
+OUTPUT_TEXT = "spdy_website_full_content.txt"
 
-USER_AGENT = "Mozilla/5.0 (compatible; MITEBot/1.0; +https://example.com/bot)"
+USER_AGENT = "Mozilla/5.0 (compatible; SPDYBot/1.0; +https://example.com/bot)"
 NAV_TIMEOUT_MS = 60000
 SCROLL_PAUSE = 0.5
 WAIT_AFTER_RENDER = 1.0

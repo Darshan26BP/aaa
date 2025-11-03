@@ -2,8 +2,8 @@
 import json
 from pathlib import Path
 
-INPUT_FILE = "mite_website_pages_full.json"  # extractor output
-OUTPUT_FILE = "mite_website_chunks.json"
+INPUT_FILE = "spdy_website_pages_full.json"  # extractor output
+OUTPUT_FILE = "spdy_website_chunks.json"
 
 # chunking params
 MAX_WORDS = 120

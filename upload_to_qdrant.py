@@ -13,8 +13,8 @@ load_dotenv()
 
 QDRANT_URL = os.getenv("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip()
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "mite-chatbot")
-CHUNKS_FILE = os.getenv("CHUNKS_FILE", "mite_website_chunks.json")
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "spdy-chatbot")
+CHUNKS_FILE = os.getenv("CHUNKS_FILE", "spdy_website_chunks.json")
 DIMENSION = 384   # for all-MiniLM-L6-v2
 BATCH_SIZE = 50
 RETRIES = 3
