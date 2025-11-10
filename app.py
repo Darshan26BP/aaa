@@ -5,24 +5,32 @@ import time
 from flask import Flask, request, jsonify, render_template
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
 import nltk
 from nltk.corpus import wordnet
 
 # ----------------- CONFIG -----------------
-load_dotenv()
+_dotenv_path = find_dotenv(usecwd=True)
+if _dotenv_path:
+    load_dotenv(_dotenv_path)
+    print(f"✅ Loaded .env from: {_dotenv_path}")
+else:
+    load_dotenv()
+    print("⚠️ No explicit .env file found with find_dotenv; relying on environment variables.")
 
 QDRANT_URL = os.getenv("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip()
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "spdy-chatbot")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_API_KEYS = [k.strip() for k in os.getenv("OPENAI_API_KEYS", "").split(",") if k.strip()]
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+OPENAI_ORG = os.getenv("OPENAI_ORG", "").strip()
+OPENAI_PROJECT = os.getenv("OPENAI_PROJECT", "").strip()
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip()
 
 # ----------------- Validate Environment Variables -----------------
-if not OPENAI_API_KEY and not OPENAI_API_KEYS:
-    raise ValueError("❌ OPENAI_API_KEY or OPENAI_API_KEYS is not set in .env file")
+if not OPENAI_API_KEY:
+    raise ValueError("❌ OPENAI_API_KEY is not set in .env file")
 if not QDRANT_URL:
     raise ValueError("❌ QDRANT_URL is not set in .env file")
 if not QDRANT_API_KEY:
@@ -31,16 +39,47 @@ if not QDRANT_API_KEY:
 # ----------------- Initialize -----------------
 app = Flask(__name__)
 
-_openai_clients = []
-_openai_idx = 0
 try:
-    keys = OPENAI_API_KEYS if OPENAI_API_KEYS else [OPENAI_API_KEY]
-    for k in keys:
-        _openai_clients.append(OpenAI(api_key=k))
-    if not _openai_clients:
-        raise RuntimeError("No OpenAI clients initialized")
+    # Allow optional organization/project hints (useful for some account setups)
+    client_kwargs = {"api_key": OPENAI_API_KEY}
+    if OPENAI_ORG:
+        client_kwargs["organization"] = OPENAI_ORG
+    if OPENAI_PROJECT:
+        client_kwargs["project"] = OPENAI_PROJECT
+    if OPENAI_BASE_URL:
+        client_kwargs["base_url"] = OPENAI_BASE_URL
+    openai_client = OpenAI(**client_kwargs)
 except Exception as e:
-    raise ValueError(f"❌ Failed to initialize OpenAI client(s): {e}")
+    print(f"⚠️ Failed to initialize OpenAI client: {e}")
+    openai_client = None
+
+# Validate the API key with a lightweight call at startup (clearer early failure)
+OPENAI_AVAILABLE = True
+try:
+    # This will raise if the key is invalid
+    _ = openai_client.models.list() if openai_client else None
+    masked_key = (OPENAI_API_KEY[:6] + "..." + OPENAI_API_KEY[-4:]) if OPENAI_API_KEY else ""
+    print(
+        "✅ OpenAI client initialized:",
+        {
+            "model": OPENAI_MODEL,
+            "key": masked_key,
+            "org": (OPENAI_ORG[:6] + "...") if OPENAI_ORG else None,
+            "project": (OPENAI_PROJECT[:6] + "...") if OPENAI_PROJECT else None,
+            "base_url": OPENAI_BASE_URL or "https://api.openai.com/v1",
+        }
+    )
+except Exception as e:
+    emsg = str(e)
+    if "401" in emsg or "invalid_api_key" in emsg.lower() or "Incorrect API key provided" in emsg:
+        masked = (OPENAI_API_KEY[:6] + "..." + OPENAI_API_KEY[-4:]) if OPENAI_API_KEY else ""
+        hint = ""
+        if OPENAI_API_KEY.startswith("sk-proj-") and not (OPENAI_PROJECT or OPENAI_ORG):
+            hint = " It looks like a project-scoped key; set OPENAI_PROJECT (and optionally OPENAI_ORG)."
+        print(f"❌ OpenAI rejected the API key ({masked}). Continuing without LLM.{hint}")
+        OPENAI_AVAILABLE = False
+    # Non-auth failures should not block app boot; they will be retried on demand
+    print(f"⚠️ OpenAI models.list check failed (non-auth): {e}")
 
 try:
     client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=30.0)
@@ -140,13 +179,7 @@ def amir_pipeline(query: str):
 
 # ----------------- OpenAI response -----------------
 def _get_openai_client():
-    global _openai_idx
-    client = _openai_clients[_openai_idx % len(_openai_clients)]
-    return client
-
-def _rotate_openai_client():
-    global _openai_idx
-    _openai_idx = (_openai_idx + 1) % len(_openai_clients)
+    return openai_client
 
 def generate_response_with_openai(query: str, retrieved_chunks):
     # Conversational shortcuts
@@ -161,6 +194,13 @@ def generate_response_with_openai(query: str, retrieved_chunks):
     # If no data found
     if not retrieved_chunks or retrieved_chunks == ["No Data Available"]:
         return "❌ No Data Available"
+
+    # Local extractive fallback (no-LLM): return the most relevant snippet
+    def _fallback_answer():
+        context_preview = " ".join((retrieved_chunks or [])[:2])
+        # Keep it concise
+        context_preview = (context_preview[:600] + "…") if len(context_preview) > 600 else context_preview
+        return context_preview or "❌ No Data Available"
 
     # Otherwise → Use OpenAI with retrieved dataset chunks
     # Limit context size to reduce token usage
@@ -183,6 +223,8 @@ Question:
     max_attempts = 5
     backoff = 1.5
     delay = 1.0
+    if not OPENAI_AVAILABLE or _get_openai_client() is None:
+        return _fallback_answer()
     for attempt in range(1, max_attempts + 1):
         try:
             client = _get_openai_client()
@@ -199,7 +241,6 @@ Question:
         except Exception as e:
             msg = str(e)
             if "429" in msg or "rate limit" in msg.lower():
-                _rotate_openai_client()
                 if attempt == max_attempts:
                     return "⚠️ OpenAI API rate limit exceeded. Please try again shortly."
                 # jittered backoff
@@ -207,7 +248,17 @@ Question:
                 time.sleep(delay + random.uniform(0, 0.5))
                 delay *= backoff
                 continue
-            return f"⚠️ Error contacting OpenAI API: {e}"
+            if "401" in msg or "invalid_api_key" in msg.lower() or "Incorrect API key provided" in msg:
+                masked = (OPENAI_API_KEY[:6] + "..." + OPENAI_API_KEY[-4:]) if OPENAI_API_KEY else ""
+                hint = ""
+                if OPENAI_API_KEY.startswith("sk-proj-") and not (OPENAI_PROJECT or OPENAI_ORG):
+                    hint = " Set OPENAI_PROJECT (and optionally OPENAI_ORG) if using a project-scoped key."
+                # Fall back to extractive answer rather than erroring
+                fb = _fallback_answer()
+                return fb
+            # Surface detailed message for easier debugging (masked key only)
+            # Fall back for other errors too
+            return _fallback_answer()
 
 
 # ----------------- ROUTES -----------------
@@ -239,6 +290,25 @@ def chat():
             unique_sources.append(source)
 
     return jsonify({"answer": answer, "sources": unique_sources})
+
+# ----------------- DEBUG ROUTES (local troubleshooting) -----------------
+@app.route("/debug/openai", methods=["GET"])
+def debug_openai():
+    try:
+        models = _get_openai_client().models.list()
+        first_model = models.data[0].id if getattr(models, "data", None) else None
+        return jsonify({
+            "ok": True,
+            "first_model": first_model,
+            "model_count": len(models.data) if getattr(models, "data", None) else 0
+        })
+    except Exception as e:
+        masked = (OPENAI_API_KEY[:6] + "..." + OPENAI_API_KEY[-4:]) if OPENAI_API_KEY else ""
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "key_fingerprint": masked
+        }), 500
 
 # ----------------- MAIN -----------------
 if __name__ == "__main__":
